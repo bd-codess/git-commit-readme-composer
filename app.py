@@ -15,7 +15,7 @@ from google.genai import errors, types
 load_dotenv()
 
 # ---------------------------------------------------------------- config ----
-MODEL = os.getenv("GEMINI_MODEL", ""gemini-3.8-flash"")  # check AI Studio for current names
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")  # check AI Studio for current names
 MAX_INPUT_CHARS = 20_000
 MAX_OUTPUT_TOKENS = 4096  # Gemini 2.5 counts internal thinking tokens too
 
