@@ -6,6 +6,7 @@ Run:  streamlit run app.py
 """
 
 import os
+import time
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -17,7 +18,9 @@ load_dotenv()
 # ---------------------------------------------------------------- config ----
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")  # check AI Studio for current names
 MAX_INPUT_CHARS = 20_000
-MAX_OUTPUT_TOKENS = 4096  # Gemini 2.5 counts internal thinking tokens too
+FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL")  # optional backup model name
+MAX_RETRIES = 3  # retries for temporary errors (503/429/500/504)
+MAX_OUTPUT_TOKENS = 4096  # Gemini thinking models count internal thinking tokens too
 
 LANGUAGES = [
     "Python", "JavaScript", "TypeScript", "Java", "C++", "C#", "Go",
@@ -110,17 +113,29 @@ def get_api_key() -> str | None:
 
 
 def generate(system_prompt: str, code: str, language: str) -> str:
-    """Call the model once and return the text. Raises on failure."""
+    """Call the model, retrying temporary errors. Raises if all attempts fail."""
     client = genai.Client(api_key=get_api_key())
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=f"Language: {language}\n\n<code>\n{code}\n</code>",
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            max_output_tokens=MAX_OUTPUT_TOKENS,
-        ),
-    )
-    return (response.text or "").strip()
+    models = [MODEL] + ([FALLBACK_MODEL] if FALLBACK_MODEL else [])
+    last_error = None
+    for model in models:
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=f"Language: {language}\n\n<code>\n{code}\n</code>",
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        max_output_tokens=MAX_OUTPUT_TOKENS,
+                    ),
+                )
+                return (response.text or "").strip()
+            except errors.APIError as e:
+                last_error = e
+                if e.code in (429, 500, 503, 504) and attempt < MAX_RETRIES - 1:
+                    time.sleep(2 ** (attempt + 1))  # wait 2s, then 4s
+                    continue
+                break  # permanent error or retries used up: try next model
+    raise last_error
 
 
 def run_pipeline(code: str, language: str, tone: str) -> None:
@@ -135,6 +150,8 @@ def run_pipeline(code: str, language: str, tone: str) -> None:
             st.error("Invalid or missing API key. Check your .env file or Streamlit secrets.")
         elif e.code == 429:
             st.warning("Rate limit reached. Please wait a minute and try again.")
+        elif e.code in (500, 503, 504):
+            st.warning("The AI model is busy right now (temporary). Please try again in a minute.")
         else:
             st.error(f"API error ({e.code}): {e.message}")
     except Exception as e:  # keep the demo alive no matter what
