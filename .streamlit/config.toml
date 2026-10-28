@@ -1,0 +1,10 @@
+# Theme built from the palette: b38cb4, b7918c, c5a48a, ddc67b, f8f272
+# (Amethyst Smoke, Rosy Taupe, Tan, Golden Sand, Canary Yellow)
+# The palette is all light/mid tones, so a dark plum base is added for contrast.
+[theme]
+base = "dark"
+primaryColor = "#ddc67b"              # Golden Sand: buttons, active tab, focus
+backgroundColor = "#1c1720"           # dark plum (added for contrast)
+secondaryBackgroundColor = "#2a2230"  # sidebar and widget panels
+textColor = "#f5efe8"                 # warm cream
+font = "sans serif"

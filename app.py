@@ -183,8 +183,15 @@ st.set_page_config(page_title="Git-Commit & Readme Composer", page_icon="📝", 
 st.markdown(
     """
     <style>
-    textarea { border: 1.5px solid #cbd5e1 !important; border-radius: 8px !important; }
-    textarea:focus { border-color: #6366f1 !important; box-shadow: 0 0 0 2px #c7d2fe !important; }
+    /* Palette: #b38cb4 Amethyst Smoke, #b7918c Rosy Taupe, #c5a48a Tan,
+       #ddc67b Golden Sand, #f8f272 Canary Yellow */
+    textarea { border: 1.5px solid #b7918c !important; border-radius: 8px !important; }
+    textarea:focus { border-color: #ddc67b !important; box-shadow: 0 0 0 2px rgba(221,198,123,0.35) !important; }
+    h1 { color: #ddc67b; }
+    h2, h3 { color: #b38cb4; }
+    /* dark text on the light gold primary button for readability */
+    button[kind="primary"] p,
+    button[data-testid="stBaseButton-primary"] p { color: #1c1720 !important; font-weight: 600; }
     </style>
     """,
     unsafe_allow_html=True,
