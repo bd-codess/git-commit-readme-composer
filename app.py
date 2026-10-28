@@ -19,7 +19,7 @@ load_dotenv()
 # ---------------------------------------------------------------- config ----
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")  # check AI Studio for current names
 MAX_INPUT_CHARS = 20_000
-FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")  # optional backup model name
+FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL")  # optional backup model name
 MAX_RETRIES = 2  # attempts per model for temporary errors (503/429/500/504)
 REQUEST_TIMEOUT_MS = 30_000  # give up on a single request after 30 seconds
 MAX_OUTPUT_TOKENS = 4096  # Gemini thinking models count internal thinking tokens too
@@ -75,26 +75,35 @@ MIT (placeholder)
 COMMIT_PROMPT = CORE_PROMPT + """
 
 TASK: Write git commit messages for the provided code changes, following the
-Conventional Commits standard. Allowed types: feat, fix, docs, style,
-refactor, perf, test, build, ci, chore.
+Conventional Commits 1.0.0 specification exactly.
 
-Output exactly three options, formatted like this and nothing else:
+Format of each message:
+<type>[optional scope][!]: <description>
 
-### Option 1 (recommended)
-`type(scope): imperative summary under 72 characters`
+[optional body]
 
-Optional body: 1-3 lines explaining what and why.
+[optional footer(s)]
 
-### Option 2
-...
+Rules:
+- Types: feat (adds a new feature), fix (fixes a bug), docs, style, refactor,
+  perf, test, build, ci, chore, revert. Use feat ONLY for new features and fix
+  ONLY for bug fixes.
+- Type and scope are lowercase. The scope is a noun in parentheses, e.g. (auth).
+- The description follows the colon and a space. Use imperative mood, keep it
+  under 72 characters, with no trailing period.
+- The body, if present, starts one blank line after the description.
+- Footers start one blank line after the body, in the form `Token: value`
+  or `Token #value` (e.g. `Refs: #123`). Tokens use hyphens instead of spaces.
+- If the change breaks an existing interface, mark it with `!` before the colon
+  and/or add a footer `BREAKING CHANGE: <description>` in uppercase.
+- For a revert, use the type revert and a `Refs:` footer if a commit hash is
+  known.
 
-### Option 3
-...
-
-Rules: imperative mood, lowercase type, no trailing period in the summary,
-each option must differ meaningfully (e.g. different type, scope or detail
-level). Add `BREAKING CHANGE:` in the body only if the input clearly breaks
-an existing interface.
+Output exactly three options. Put each option in its own fenced code block so
+it can be copied directly into git, with only a bold label line before each
+block, like **Option 1 (recommended)**. Make the options meaningfully
+different (type, scope or level of detail). If the input mixes unrelated
+changes, add one final line: "Tip: split this into separate commits."
 """
 
 TONE_SUFFIX = {
@@ -230,8 +239,8 @@ with right:
 
     with tab_commits:
         if "commits" in st.session_state:
-            st.caption("Use the copy icon at the top-right of the block.")
-            st.code(st.session_state.commits, language="markdown")
+            st.caption("Hover over an option and use its copy icon to copy a single commit message.")
+            st.markdown(st.session_state.commits)  # each option renders as its own copyable code block
         else:
             st.info("Your commit message options will appear here.")
 
