@@ -7,6 +7,7 @@ Run:  streamlit run app.py
 
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -19,7 +20,8 @@ load_dotenv()
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")  # check AI Studio for current names
 MAX_INPUT_CHARS = 20_000
 FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL")  # optional backup model name
-MAX_RETRIES = 3  # retries for temporary errors (503/429/500/504)
+MAX_RETRIES = 2  # attempts per model for temporary errors (503/429/500/504)
+REQUEST_TIMEOUT_MS = 30_000  # give up on a single request after 30 seconds
 MAX_OUTPUT_TOKENS = 4096  # Gemini thinking models count internal thinking tokens too
 
 LANGUAGES = [
@@ -112,9 +114,12 @@ def get_api_key() -> str | None:
     return os.getenv("GEMINI_API_KEY")
 
 
-def generate(system_prompt: str, code: str, language: str) -> str:
+def generate(api_key: str, system_prompt: str, code: str, language: str) -> str:
     """Call the model, retrying temporary errors. Raises if all attempts fail."""
-    client = genai.Client(api_key=get_api_key())
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS),
+    )
     models = [MODEL] + ([FALLBACK_MODEL] if FALLBACK_MODEL else [])
     last_error = None
     for model in models:
@@ -132,7 +137,7 @@ def generate(system_prompt: str, code: str, language: str) -> str:
             except errors.APIError as e:
                 last_error = e
                 if e.code in (429, 500, 503, 504) and attempt < MAX_RETRIES - 1:
-                    time.sleep(2 ** (attempt + 1))  # wait 2s, then 4s
+                    time.sleep(2)
                     continue
                 break  # permanent error or retries used up: try next model
     raise last_error
@@ -143,8 +148,13 @@ def run_pipeline(code: str, language: str, tone: str) -> None:
     suffix = TONE_SUFFIX.get(tone, "")
     try:
         with st.spinner("Generating README and commit messages..."):
-            st.session_state.readme = generate(README_PROMPT + suffix, code, language)
-            st.session_state.commits = generate(COMMIT_PROMPT + suffix, code, language)
+            api_key = get_api_key()  # read in the main thread
+            with ThreadPoolExecutor(max_workers=2) as pool:  # run both calls at once
+                readme_job = pool.submit(generate, api_key, README_PROMPT + suffix, code, language)
+                commits_job = pool.submit(generate, api_key, COMMIT_PROMPT + suffix, code, language)
+                readme, commits = readme_job.result(), commits_job.result()
+            st.session_state.readme = readme
+            st.session_state.commits = commits
     except errors.APIError as e:
         if e.code in (401, 403):
             st.error("Invalid or missing API key. Check your .env file or Streamlit secrets.")
