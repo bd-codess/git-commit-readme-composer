@@ -17,9 +17,9 @@ from google.genai import errors, types
 load_dotenv()
 
 # ---------------------------------------------------------------- config ----
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")  # check AI Studio for current names
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")  # check AI Studio for current names
 MAX_INPUT_CHARS = 20_000
-FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL","gemini-3.5-flash-lite")  # optional backup model name
+FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL","gemini-3.8-flash")  # optional backup model name
 MAX_RETRIES = 2  # attempts per model for temporary errors (503/429/500/504)
 REQUEST_TIMEOUT_MS = 30_000  # give up on a single request after 30 seconds
 MAX_OUTPUT_TOKENS = 1800  # Gemini thinking models count internal thinking tokens too
