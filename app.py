@@ -19,10 +19,10 @@ load_dotenv()
 # ---------------------------------------------------------------- config ----
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")  # check AI Studio for current names
 MAX_INPUT_CHARS = 20_000
-FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL","gemini-3.5-flash-lite")  # optional backup model name
+FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL")  # optional backup model name
 MAX_RETRIES = 2  # attempts per model for temporary errors (503/429/500/504)
 REQUEST_TIMEOUT_MS = 30_000  # give up on a single request after 30 seconds
-MAX_OUTPUT_TOKENS = 1800  # Gemini thinking models count internal thinking tokens too
+MAX_OUTPUT_TOKENS = 4096  # Gemini thinking models count internal thinking tokens too
 
 LANGUAGES = [
     "Python", "JavaScript", "TypeScript", "Java", "C++", "C#", "Go",
@@ -177,6 +177,11 @@ def run_pipeline(code: str, language: str, tone: str) -> None:
         st.error(f"Unexpected error: {e}")
 
 
+def clear_input() -> None:
+    """Button callback: empty the input box in one click."""
+    st.session_state.code_input = ""
+
+
 # --------------------------------------------------------------------- UI ---
 st.set_page_config(page_title="Git-Commit & Readme Composer", page_icon="📝", layout="wide")
 
@@ -208,11 +213,14 @@ with left:
     tone = st.radio("Output style", ["Concise", "Detailed"], horizontal=True)
     code = st.text_area(
         "Code, diff or notes",
+        key="code_input",
         height=380,
         placeholder="Paste modified code, a git diff, or rough notes here...",
     )
     st.caption(f"{len(code):,} / {MAX_INPUT_CHARS:,} characters")
-    run = st.button("✨ Generate", type="primary", use_container_width=True)
+    gen_col, clear_col = st.columns([3, 1])
+    run = gen_col.button("✨ Generate", type="primary", use_container_width=True)
+    clear_col.button("🗑 Clear", on_click=clear_input, use_container_width=True)
 
 if run:
     if not code.strip():
