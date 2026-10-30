@@ -18,11 +18,13 @@ load_dotenv()
 
 # ---------------------------------------------------------------- config ----
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")  # check AI Studio for current names
+FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")  # lighter backup
+THINKING_LEVEL = os.getenv("GEMINI_THINKING_LEVEL", "low")  # low = fast; "" keeps the model default
 MAX_INPUT_CHARS = 20_000
-FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")  # optional backup model name
 MAX_RETRIES = 2  # attempts per model for temporary errors (503/429/500/504)
-REQUEST_TIMEOUT_MS = 30_000  # give up on a single request after 30 seconds
-MAX_OUTPUT_TOKENS = 4096  # Gemini thinking models count internal thinking tokens too
+REQUEST_TIMEOUT_MS = 15_000  # give up on a slow request after 15 seconds
+README_MAX_TOKENS = 2048
+COMMIT_MAX_TOKENS = 1024
 
 LANGUAGES = [
     "Python", "JavaScript", "TypeScript", "Java", "C++", "C#", "Go",
@@ -45,13 +47,13 @@ README_PROMPT = CORE_PROMPT + """
 
 TASK: Write a README.md for the provided code.
 Output raw markdown only (do not wrap the whole answer in a code fence).
-Use exactly these sections, in this order, skipping none:
+Use exactly these sections, in this order:
 
 # <Project Title>
 <one-sentence description>
 
 ## Features
-- bullet list
+- short bullet list
 
 ## Tech Stack
 - languages, frameworks, libraries detected in the code
@@ -61,12 +63,6 @@ numbered steps with fenced shell commands
 
 ## Usage
 fenced example showing how to run or use the code
-
-## Project Structure
-short list of the files/functions visible in the input
-
-## Contributing
-2-3 lines
 
 ## License
 MIT (placeholder)
@@ -107,7 +103,7 @@ changes, add one final line: "Tip: split this into separate commits."
 """
 
 TONE_SUFFIX = {
-    "Concise": "\n\nStyle: keep everything as short as possible.",
+    "Concise": "\n\nStyle: be brief. Keep the README under 200 words and commit bodies under 2 lines.",
     "Detailed": "\n\nStyle: be thorough and include helpful extra detail.",
 }
 
@@ -123,47 +119,81 @@ def get_api_key() -> str | None:
     return os.getenv("GEMINI_API_KEY")
 
 
-def generate(api_key: str, system_prompt: str, code: str, language: str) -> str:
-    """Call the model, retrying temporary errors. Raises if all attempts fail."""
+RETRYABLE = (429, 500, 503, 504)
+
+
+def make_config(system_prompt: str, max_tokens: int, use_thinking: bool):
+    kwargs = {"system_instruction": system_prompt, "max_output_tokens": max_tokens}
+    if use_thinking and THINKING_LEVEL:
+        kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=THINKING_LEVEL)
+    return types.GenerateContentConfig(**kwargs)
+
+
+def generate(api_key: str, system_prompt: str, max_tokens: int, code: str, language: str) -> str:
+    """Call the model fast: low thinking, short timeout, retry, then fall back."""
     client = genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS),
     )
-    models = [MODEL] + ([FALLBACK_MODEL] if FALLBACK_MODEL else [])
+    models = [MODEL] + ([FALLBACK_MODEL] if FALLBACK_MODEL and FALLBACK_MODEL != MODEL else [])
+    contents = f"Language: {language}\n\n<code>\n{code}\n</code>"
+    use_thinking = True
     last_error = None
     for model in models:
-        for attempt in range(MAX_RETRIES):
+        attempt = 0
+        while attempt < MAX_RETRIES:
             try:
                 response = client.models.generate_content(
                     model=model,
-                    contents=f"Language: {language}\n\n<code>\n{code}\n</code>",
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        max_output_tokens=MAX_OUTPUT_TOKENS,
-                    ),
+                    contents=contents,
+                    config=make_config(system_prompt, max_tokens, use_thinking),
                 )
                 return (response.text or "").strip()
             except errors.APIError as e:
                 last_error = e
-                if e.code in (429, 500, 503, 504) and attempt < MAX_RETRIES - 1:
-                    time.sleep(2)
+                if e.code == 400 and use_thinking and "think" in str(e).lower():
+                    use_thinking = False  # this model rejects the thinking setting
                     continue
-                break  # permanent error or retries used up: try next model
+                attempt += 1
+                if e.code in RETRYABLE and attempt < MAX_RETRIES:
+                    time.sleep(1)
+                    continue
+                break  # permanent error or retries used up: try the next model
+            except Exception as e:  # timeouts and network errors: move on quickly
+                last_error = e
+                break
     raise last_error
 
 
+@st.cache_resource
+def get_cache() -> dict:
+    """Server-side memory of finished results so repeat demos are instant."""
+    return {}
+
+
 def run_pipeline(code: str, language: str, tone: str) -> None:
-    """Generate both artifacts and store them in session state."""
+    """Generate both artifacts (in parallel) and store them in session state."""
     suffix = TONE_SUFFIX.get(tone, "")
+    cache = get_cache()
+    key = (code, language, tone, MODEL)
+    start = time.perf_counter()
+    if key in cache:
+        st.session_state.readme, st.session_state.commits = cache[key]
+        st.session_state.elapsed = (time.perf_counter() - start, True)
+        return
     try:
         with st.spinner("Generating README and commit messages..."):
             api_key = get_api_key()  # read in the main thread
             with ThreadPoolExecutor(max_workers=2) as pool:  # run both calls at once
-                readme_job = pool.submit(generate, api_key, README_PROMPT + suffix, code, language)
-                commits_job = pool.submit(generate, api_key, COMMIT_PROMPT + suffix, code, language)
+                readme_job = pool.submit(generate, api_key, README_PROMPT + suffix, README_MAX_TOKENS, code, language)
+                commits_job = pool.submit(generate, api_key, COMMIT_PROMPT + suffix, COMMIT_MAX_TOKENS, code, language)
                 readme, commits = readme_job.result(), commits_job.result()
-            st.session_state.readme = readme
-            st.session_state.commits = commits
+        st.session_state.readme = readme
+        st.session_state.commits = commits
+        st.session_state.elapsed = (time.perf_counter() - start, False)
+        if len(cache) >= 50:
+            cache.clear()
+        cache[key] = (readme, commits)
     except errors.APIError as e:
         if e.code in (401, 403):
             st.error("Invalid or missing API key. Check your .env file or Streamlit secrets.")
@@ -235,6 +265,9 @@ if run:
 
 with right:
     st.subheader("Output")
+    if "elapsed" in st.session_state:
+        secs, hit = st.session_state.elapsed
+        st.caption(f"⚡ {'Loaded from cache' if hit else 'Generated'} in {secs:.1f}s")
     tab_readme, tab_commits = st.tabs(["README.md", "Git Commit Logs"])
 
     with tab_readme:
